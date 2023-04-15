@@ -9,7 +9,7 @@ def extract_bootstrap_nodes(csv_file):
     with open(csv_file, newline='') as csvfile:
         csv_reader = csv.reader(csvfile, delimiter=';')
         for row in csv_reader:
-            if row and 'nodes' in str(row) and 'ip' in str(row):
+            if row and 'nodes' in str(row) and 'ip' in str(row) and str(row[5]).endswith("y,r"):
                 ip_field = row[3]
                 port_field = row[4]
 
