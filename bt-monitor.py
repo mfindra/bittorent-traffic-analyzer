@@ -12,6 +12,35 @@ def extract_bootstrap_nodes(csv_file):
             if row and 'get_peers' in str(row) and str(row[7]).endswith("y,q") and str(row[7]).startswith("a,bs,id"):
                 bootstrap_nodes.add((row[2], row[3]))
 
+    if len(bootstrap_nodes) == 0:
+        print("No explicit bootstarp nodes found trying alternative way")
+        all_nodes_set = set()
+        dns_ips = set()
+
+        with open(csv_file, newline='') as csvfile:
+            csv_reader = csv.reader(csvfile, delimiter=';')
+            for row in csv_reader:
+
+                if row and row[20]:
+                    dnss = row[20]
+                    dnss_split = dnss.split(',')
+                    for ip in dnss_split:
+                        dns_ips.add(ip)
+        
+
+                if row and str(row[7]).endswith("y,r"):
+                    src_ip = row[1]
+                    src_port = int(row[4])                       
+                    all_nodes_set.add((src_ip, src_port))
+                
+
+        filtered_all_nodes_set = {node for node in all_nodes_set if node[0] in dns_ips}
+
+        for node in filtered_all_nodes_set:
+            print(f"{node[0]}:{node[1]}")
+        return sorted(list(bootstrap_nodes), key=lambda x: x[1])
+
+
     return sorted(list(bootstrap_nodes), key=lambda x: x[1])
 
 def extract_peers(csv_file):
@@ -75,8 +104,9 @@ def process_pcap(pcap_file, mode):
             '-e', 'bt-dht.bencoded.string', '-e', 'bt-dht.node', '-e', 'bt-dht.peer', '-e', 'bt-dht.id',
             '-e', 'bittorrent.piece.index', '-e', 'bittorrent.piece.begin', '-e', 'bittorrent.piece.length',
             '-e', 'bittorrent.peer_id', '-e', 'bittorrent.info_hash', '-e', 'bittorrent.msg.type',
-            '-e', 'tcp.srcport', '-e', 'tcp.dstport', 'bt-dht or bittorrent or bt-utp'
+            '-e', 'tcp.srcport', '-e', 'tcp.dstport', '-e', 'dns.qry.name', '-e', 'dns.a', 'bt-dht or bittorrent or bt-utp or dns'
         ]
+
 
         try:
             subprocess.run(tshark_command, stdout=temp_csv, check=True)
@@ -125,7 +155,7 @@ def main(argv):
         elif input_type == '-pcap':
             bootstrap_nodes = process_pcap(input_path, "peers")
 
-        print("Bootstrap nodes (sorted by port):")
+        print("Neighbor nodes (sorted by port):")
         for node in bootstrap_nodes:
             print(f"{node[0]}:{node[1]} {node[2]} {node[3]}")
 
