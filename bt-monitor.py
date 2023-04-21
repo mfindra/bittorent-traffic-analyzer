@@ -2,7 +2,6 @@ import sys
 import csv
 import subprocess
 import tempfile
-from collections import defaultdict
 
 def extract_bootstrap_nodes(csv_file):
     bootstrap_nodes = set()
@@ -14,7 +13,7 @@ def extract_bootstrap_nodes(csv_file):
                 bootstrap_nodes.add((row[2], row[3]))
 
     if len(bootstrap_nodes) == 0:
-        print("No explicit bootstarp nodes found trying alternative way")
+        print("(DNS variant) ", end="")
         all_nodes_set = set()
         dns_ips = set()
 
@@ -27,22 +26,19 @@ def extract_bootstrap_nodes(csv_file):
                     dnss_split = dnss.split(',')
                     for ip in dnss_split:
                         dns_ips.add(ip)
-        
-
+            
                 if row and str(row[7]).endswith("y,r"):
                     src_ip = row[1]
                     src_port = int(row[4])                       
                     all_nodes_set.add((src_ip, src_port))
                 
+        bootstrap_nodes = {node for node in all_nodes_set if node[0] in dns_ips}
 
-        filtered_all_nodes_set = {node for node in all_nodes_set if node[0] in dns_ips}
+    print("Bootstrap nodes:")
+    for node in sorted(list(bootstrap_nodes), key=lambda x: x[1]):
+        print(f"{node[0]}:{node[1]}")
 
-        for node in filtered_all_nodes_set:
-            print(f"{node[0]}:{node[1]}")
-        return sorted(list(bootstrap_nodes), key=lambda x: x[1])
-
-
-    return sorted(list(bootstrap_nodes), key=lambda x: x[1])
+    return 
 
 def extract_peers(csv_file):
     peers_nodes = set()
@@ -74,7 +70,7 @@ def extract_peers(csv_file):
 
 
         # Second iteration to count connections
-        csvfile.seek(0)  # Move the file pointer back to the beginning
+        csvfile.seek(0)  
         for row in csv_reader:
             if row and str(row[7]).endswith("y,r"):
                 src_ip = row[1]
@@ -90,7 +86,6 @@ def extract_peers(csv_file):
 
 
 def extract_download(csv_file):
-    file_info = defaultdict(lambda: {"info_hash": "", "size": 0, "chunks": 0, "contributors": set()})
     peers_nodes = set()
 
     with open(csv_file, newline='') as csvfile:
@@ -114,8 +109,6 @@ def extract_download(csv_file):
                         key = (ips[len(n_flags) +1 +i], int(ports[len(n_flags) +1 +i]))
                         peers_nodes.add(key)
 
-        print(peers_nodes)
-
         source = ""
         info_hash = ""
         csvfile.seek(0) 
@@ -125,17 +118,14 @@ def extract_download(csv_file):
                 if row[2] in str(peers_nodes):
                     source = row[2]
                     info_hash = row[15]
-                    print("Downloading from peer")
                     break
         
         csvfile.seek(0)
-        print(source)
         pieces = []
         contributors = 0
         for row in csv_reader:
             if row[1] == source and row[16] and "20" in str(row[16]) and "14" in str(row[16]):
                 contributors = 1
-                print(row[16])
 
             if row[2] == source and row[13]:
                 len_pieces = row[13]
@@ -146,7 +136,7 @@ def extract_download(csv_file):
         pieces = [int(x, 16) for x in pieces]        
 
         print(f"Length of file is: {sum(pieces)}, number of chunks: {len(pieces)}, info_hash is: {info_hash}, contributors: {contributors}")
-        
+
     return
 
 
@@ -220,9 +210,6 @@ def main(argv):
         elif input_type == '-pcap':
             bootstrap_nodes = process_pcap(input_path, "init")
 
-        print("Bootstrap nodes (sorted by port):")
-        for node in bootstrap_nodes:
-            print(f"{node[0]}:{node[1]}")
 
     if peers_mode:
         if input_type == '-csv':
@@ -230,7 +217,7 @@ def main(argv):
         elif input_type == '-pcap':
             bootstrap_nodes = process_pcap(input_path, "peers")
 
-        print("Neighbor nodes (sorted by port):")
+        print("Neighbor nodes:")
         for node in bootstrap_nodes:
             print(f"{node[0]}:{node[1]} {node[2]} {node[3]}")
 
