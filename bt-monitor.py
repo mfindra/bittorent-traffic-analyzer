@@ -2,6 +2,43 @@ import sys
 import csv
 import subprocess
 import tempfile
+from enum import Enum
+
+class peerMessage(Enum):
+    CHOKE = "0"
+    UNCHOKE = "1"
+    INTERESTED = "2"
+    NOT_INTERESTED = "3"
+    HAVE = "4"
+    BITFIELD = "5"
+    REQUEST = "6"
+    PIECE = "7"
+    CANCEL = "8"
+    HAVE_ALL = "20"
+
+class csvFields(Enum):
+    FRAME_TIME_RELATIVE = 0
+    IP_SRC = 1
+    IP_DST = 2
+    UDP_DSTPORT = 3
+    UDP_SRCPORT = 4
+    BT_DHT_IP = 5
+    BT_DHT_PORT = 6
+    BT_DHT_BENCODED_STRING = 7
+    BT_DHT_NODE = 8
+    BT_DHT_PEER = 9
+    BT_DHT_ID = 10
+    BITTORRENT_PIECE_INDEX = 11
+    BITTORRENT_PIECE_BEGIN = 12
+    BITTORRENT_PIECE_LENGTH = 13
+    BITTORRENT_PEER_ID = 14
+    BITTORRENT_INFO_HASH = 15
+    BITTORRENT_MSG_TYPE = 16
+    TCP_SRCPORT = 17
+    TCP_DSTPORT = 18
+    DNS_QRY_NAME = 19
+    DNS_A = 20
+
 
 def extract_bootstrap_nodes(csv_file):
     bootstrap_nodes = set()
@@ -54,7 +91,7 @@ def extract_peers(csv_file):
 
                 nodes_flags = row[8]
                 peers_flags = row[9]
-                n_flags = nodes_flags.split(',')                
+                nodes_flags = nodes_flags.split(',')                
                 if len(peers_flags) != 0:
                     peers_flags = peers_flags.split(',')
 
@@ -62,8 +99,12 @@ def extract_peers(csv_file):
                 ports = (port_field.split(','))
                 ids = (ids_field.split(','))
 
-                for i in range(len(n_flags)):
-                    if n_flags[i] == '1':
+                if (len(ips) != (len(nodes_flags))):
+                    ips.pop(0)
+                    ports.pop(0)
+
+                for i in range(len(nodes_flags)):
+                    if nodes_flags[i] == '1':
                         key = (ips[i], int(ports[i]), ids[i])
                         peers_nodes.add(key)
                         connections[key] = 0
@@ -80,16 +121,12 @@ def extract_peers(csv_file):
                     if key[0] == src_ip and key[1] == src_port:
                         connections[key] += 1
                         break
-    
-    sorted_peers_nodes = sorted(list(peers_nodes), key=lambda x: x[1])
-    return [(node[0], node[1], node[2], connections[node]) for node in sorted_peers_nodes]
+
+        """
+            peers_nodes = set()
 
 
-def extract_download(csv_file):
-    peers_nodes = set()
-
-    with open(csv_file, newline='') as csvfile:
-        csv_reader = csv.reader(csvfile, delimiter=';')
+                # first pass, extract peer nodes 
         for row in csv_reader:
             if row and 'nodes' in str(row) and str(row[7]).endswith("y,r"):
                 ip_field = row[5]
@@ -97,46 +134,105 @@ def extract_download(csv_file):
 
                 nodes_flags = row[8]
                 peers_flags = row[9]
-                n_flags = nodes_flags.split(',')                
+                nodes_flags = nodes_flags.split(',')                
                 if len(peers_flags) != 0:
                     peers_flags = peers_flags.split(',')
 
                 ips = (ip_field.split(','))
                 ports = (port_field.split(','))
 
+                if (len(ips) != (len(nodes_flags) + len(peers_flags))):
+                    ips.pop(0)
+                    ports.pop(0)
+                
                 for i in range(len(peers_flags)):
                     if peers_flags[i] == '1':
-                        key = (ips[len(n_flags) +1 +i], int(ports[len(n_flags) +1 +i]))
+                        key = (ips[len(nodes_flags) +i], int(ports[len(nodes_flags) +i]))
                         peers_nodes.add(key)
+        """
+    
+    sorted_peers_nodes = sorted(list(peers_nodes), key=lambda x: x[1])
+    return [(node[0], node[1], node[2], connections[node]) for node in sorted_peers_nodes]
 
-        source = ""
+def extract_download(csv_file):
+    # open file and prepare lines for parsing
+    with open(csv_file, newline='') as csvfile:
+        csv_reader = csv.reader(csvfile, delimiter=';')
+
         info_hash = ""
-        csvfile.seek(0) 
-        for row in csv_reader:
-            if row[14] and row[15] and not row[16]:
-                print("handshake")
-                if row[2] in str(peers_nodes):
-                    source = row[2]
-                    info_hash = row[15]
-                    break
+        interested_peers = set()
+        handshake_peers = set()
         
-        csvfile.seek(0)
-        pieces = []
-        contributors = 0
+        # extract all addresses, client send Interested(2) message to
         for row in csv_reader:
-            if row[1] == source and row[16] and "20" in str(row[16]) and "14" in str(row[16]):
-                contributors = 1
+            if peerMessage.INTERESTED.value in str(row[16]) and not peerMessage.HAVE_ALL.value in str(row[16]):
+                interested_peers.add(row[2])
+        
+        # extract addresses from Handshakes with with users from Interested 
+        csvfile.seek(0)
+        for row in csv_reader:
+            for peer in interested_peers:
+                 if row[14] and row[15] and not row[16] and (peer == row[2]):
+                    handshake_peers.add((peer, row[15]))
 
-            if row[2] == source and row[13]:
-                len_pieces = row[13]
-                len_pieces = len_pieces.split(',')
-                for piece in len_pieces:
-                    pieces.append(piece)
 
-        pieces = [int(x, 16) for x in pieces]        
+        contributors = 0
+        chunks = 0
+        file_parts = []
+        
+        # extract chunks exchanged with Handshaked users by flag Request(6) in BitTorrent packets
+        for peer in handshake_peers:
+            csvfile.seek(0)
+            ids = []
+            for row in csv_reader:
 
-        print(f"Length of file is: {sum(pieces)}, number of chunks: {len(pieces)}, info_hash is: {info_hash}, contributors: {contributors}")
+                sixes = 0
+                if row[2] == peer[0] and row[13]:
+                    len_pieces = row[13].split(',')
+                    ids_list = row[11].split(',')
+                    flags = row[16].split(',')
 
+
+                    for i in range(len(ids_list)):
+                        if flags[i] == "6":
+                            ids.append((peer[0], ids_list[i], int(len_pieces[sixes], 16)))
+                            sixes+=1
+                            chunks+=1
+
+            # merge parts of same chunks and count the bite size
+            merged_data = {}
+            for tup in ids:
+                key = tup[1]
+                length = tup[2]
+                if key in merged_data:
+                    merged_data[key] += length
+                else:
+                    merged_data[key] = length
+
+            file_parts.append(merged_data)
+
+        # extract info_hash and number of contributors based on amount of chunk exchanged.
+        max_chunks = -1
+        for i, part in enumerate(file_parts):
+            if len(part) > 0:
+                contributors+=1
+            if max_chunks < len(part):
+                max_chunks = len(part)
+                info_hash = list(handshake_peers)[i][1]
+        
+        # if parts are downloaded from multiple sources, keep only greater one, to prevent incorrect counts 
+        max_values = {}
+        for lst in file_parts:
+            for key, value in lst.items():
+                if key not in max_values:
+                    max_values[key] = value
+                else:
+                    max_values[key] = max(max_values[key], value)
+
+
+        print(f"Length of file is: {sum(max_values.values())}, number of chunks: {chunks}, info_hash is: {info_hash}, contributors: {contributors}")
+
+    # 15683414
     return
 
 
