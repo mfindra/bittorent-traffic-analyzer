@@ -99,7 +99,7 @@ def extract_peers(csv_file):
                 ports = (port_field.split(','))
                 ids = (ids_field.split(','))
 
-                if (len(ips) != (len(nodes_flags))):
+                if (len(ips) != (len(nodes_flags)) + len(peers_flags)):
                     ips.pop(0)
                     ports.pop(0)
 
@@ -109,7 +109,12 @@ def extract_peers(csv_file):
                         peers_nodes.add(key)
                         connections[key] = 0
 
-
+                for i in range(len(peers_flags)):
+                    if peers_flags[i] == '1':
+                        key = (ips[len(nodes_flags) +i], int(ports[len(nodes_flags) +i]), "none")
+                        peers_nodes.add(key)
+                        connections[key] = 0
+        
         # Second iteration to count connections
         csvfile.seek(0)  
         for row in csv_reader:
@@ -121,38 +126,13 @@ def extract_peers(csv_file):
                     if key[0] == src_ip and key[1] == src_port:
                         connections[key] += 1
                         break
-
-        """
-            peers_nodes = set()
-
-
-                # first pass, extract peer nodes 
-        for row in csv_reader:
-            if row and 'nodes' in str(row) and str(row[7]).endswith("y,r"):
-                ip_field = row[5]
-                port_field = row[6]
-
-                nodes_flags = row[8]
-                peers_flags = row[9]
-                nodes_flags = nodes_flags.split(',')                
-                if len(peers_flags) != 0:
-                    peers_flags = peers_flags.split(',')
-
-                ips = (ip_field.split(','))
-                ports = (port_field.split(','))
-
-                if (len(ips) != (len(nodes_flags) + len(peers_flags))):
-                    ips.pop(0)
-                    ports.pop(0)
-                
-                for i in range(len(peers_flags)):
-                    if peers_flags[i] == '1':
-                        key = (ips[len(nodes_flags) +i], int(ports[len(nodes_flags) +i]))
-                        peers_nodes.add(key)
-        """
     
     sorted_peers_nodes = sorted(list(peers_nodes), key=lambda x: x[1])
-    return [(node[0], node[1], node[2], connections[node]) for node in sorted_peers_nodes]
+
+    print("Neighbor nodes:")
+    for node in [(node[0], node[1], node[2], connections[node]) for node in sorted_peers_nodes]:
+        print(f"{node[0]}:{node[1]} {node[2]} {node[3]}")
+    return
 
 def extract_download(csv_file):
     # open file and prepare lines for parsing
@@ -295,6 +275,9 @@ def main(argv):
             peers_mode = True
         elif argv[i] == '-download':
             download_mode = True
+        elif argv[i] != input_path:
+            print("Error: Unrecognized argument " + argv[i] + ".")
+            return
 
     if not input_path or not input_type:
         print("Error: No input path provided. Use -csv <path> or -pcap <path> to specify the path.")
@@ -302,20 +285,15 @@ def main(argv):
 
     if init_mode:
         if input_type == '-csv':
-            bootstrap_nodes = extract_bootstrap_nodes(input_path)
+            extract_bootstrap_nodes(input_path)
         elif input_type == '-pcap':
-            bootstrap_nodes = process_pcap(input_path, "init")
-
+            process_pcap(input_path, "init")
 
     if peers_mode:
         if input_type == '-csv':
-            bootstrap_nodes = extract_peers(input_path)
+            extract_peers(input_path)
         elif input_type == '-pcap':
-            bootstrap_nodes = process_pcap(input_path, "peers")
-
-        print("Neighbor nodes:")
-        for node in bootstrap_nodes:
-            print(f"{node[0]}:{node[1]} {node[2]} {node[3]}")
+            process_pcap(input_path, "peers")
 
     if download_mode:
         if input_type == '-csv':
