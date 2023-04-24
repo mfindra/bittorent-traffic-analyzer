@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 from enum import Enum
 
+# enum for types of peer messages
 class peerMessage(Enum):
     CHOKE = "0"
     UNCHOKE = "1"
@@ -16,6 +17,7 @@ class peerMessage(Enum):
     CANCEL = "8"
     HAVE_ALL = "20"
 
+# enum for fields in csv file
 class csvFields(Enum):
     FRAME_TIME_RELATIVE = 0
     IP_SRC = 1
@@ -66,7 +68,7 @@ def extract_bootstrap_nodes(csv_file):
 
                     # save addresses, to which requests were made to
                     if row and str(row[csvFields.BT_DHT_BENCODED_STRING.value]).endswith("y,r"):                     
-                        all_nodes_set.add((row[1],  int(row[csvFields.UDP_SRCPORT.value])))
+                        all_nodes_set.add((row[csvFields.IP_SRC.value],  int(row[csvFields.UDP_SRCPORT.value])))
                     
             bootstrap_nodes = {node for node in all_nodes_set if node[0] in dns_ips}
 
@@ -120,7 +122,7 @@ def extract_peers(csv_file):
             csvfile.seek(0)  
             for row in csv_reader:
                 if row and str(row[csvFields.BT_DHT_BENCODED_STRING.value]).endswith("y,r"):
-                    src_ip = row[1]
+                    src_ip = row[csvFields.IP_SRC.value]
                     src_port = int(row[csvFields.UDP_SRCPORT.value])
 
                     for key in peers_nodes:
@@ -181,7 +183,7 @@ def extract_download(csv_file):
                             if flags[i] == "6":
                                 ids.append((peer[0], ids_list[i], int(len_pieces[sixes], 16)))
                                 sixes+=1
-                                chunks+=1
+
 
                 # merge parts of same chunks and count the bite size
                 merged_data = {}
@@ -212,9 +214,10 @@ def extract_download(csv_file):
                         max_values[key] = value
                     else:
                         max_values[key] = max(max_values[key], value)
+                    chunks+=1
 
 
-            print(f"Length of file is: {sum(max_values.values())}, number of chunks: {chunks}, info_hash is: {info_hash}, contributors: {contributors}")
+            print(f"Length of file is: {sum(max_values.values())}, number of parts: {chunks}, info_hash is: {info_hash}, contributors: {contributors}")
 
     except (IOError, FileNotFoundError):
         print(f"Error: Could not read file {csv_file}")
@@ -222,7 +225,7 @@ def extract_download(csv_file):
     return
 
 
-
+# parse pcpa file from input to desired csv file
 def process_pcap(pcap_file, mode):
     with tempfile.NamedTemporaryFile(mode='w+t', delete=False) as temp_csv:
         tshark_command = [
@@ -256,9 +259,111 @@ def process_pcap(pcap_file, mode):
                 return extract_peers(temp_csv.name)
             elif mode == "download":
                 return extract_download(temp_csv.name)
+            elif mode == "rtable":
+                return create_routing_table(temp_csv.name)
         except subprocess.CalledProcessError as e:
             print(f"Error: TShark command failed with exit code {e.returncode}")
-            return []
+            return
+
+def create_routing_table(csv_file):
+    peers_nodes = set()
+    my_id = set()
+    dns_ips = set()
+    my_ips = set()
+
+    with open(csv_file, newline='') as csvfile:
+        csv_reader = csv.reader(csvfile, delimiter=';')
+
+        # extract my ip(s)
+        for row in csv_reader:
+            # parse only DNS packets
+            if row and row[csvFields.DNS_A.value]:               
+                my_ips.add(row[csvFields.IP_DST.value])
+                dnss_split = row[csvFields.DNS_A.value].split(',')
+                for ip in dnss_split:
+                    dns_ips.add(ip)
+
+        
+
+        csvfile.seek(0)  
+        for row in csv_reader:
+            
+            # extract my id(s)
+            if (row and not 'announce_peer' in str(row) and 
+                not 'find_node' in str(row) and 
+                str(row[csvFields.BT_DHT_BENCODED_STRING.value]).endswith("y,q") and 
+                str(row[csvFields.BT_DHT_BENCODED_STRING.value]).startswith("a,id") and
+                str(row[csvFields.IP_SRC.value]) in str(my_ips)):
+                my_id.add(row[csvFields.BT_DHT_BENCODED_STRING.value].split(',')[2])
+
+            # extract get_peers responses
+            if row and 'nodes' in str(row) and str(row[csvFields.BT_DHT_BENCODED_STRING.value]).endswith("y,r"):
+                    ip_field = row[csvFields.BT_DHT_IP.value]
+                    port_field = row[csvFields.BT_DHT_PORT.value]
+                    ids_field = row[csvFields.BT_DHT_ID.value]
+
+                    nodes_flags = row[csvFields.BT_DHT_NODE.value]
+                    peers_flags = row[csvFields.BT_DHT_PEER.value]
+                    nodes_flags = nodes_flags.split(',')                
+                    if len(peers_flags) != 0:
+                        peers_flags = peers_flags.split(',')
+
+                    ips = (ip_field.split(','))
+                    ports = (port_field.split(','))
+                    ids = (ids_field.split(','))
+
+                    if (len(ips) != (len(nodes_flags)) + len(peers_flags)):
+                        ips.pop(0)
+                        ports.pop(0)
+
+                    for i in range(len(nodes_flags)):
+                        if nodes_flags[i] == '1':
+                            key = (ips[i], int(ports[i]), ids[i])
+                            peers_nodes.add(key)                        
+
+
+
+    #print(my_id)
+    #print(peers_nodes)
+    
+    def xor_and_count_leading_zeros(num1, num2):
+        # Determine the maximum length of the input hexadecimal numbers
+        max_length = max(len(num1), len(num2))
+
+        # Convert hexadecimal numbers to binary strings with a fixed length
+        bin1 = bin(int(num1, 16))[2:].zfill(max_length * 4)
+        bin2 = bin(int(num2, 16))[2:].zfill(max_length * 4)
+
+        # XOR the binary strings
+        xor = ''.join([str(int(bin1[i]) ^ int(bin2[i])) for i in range(len(bin1))])
+
+        # Count the number of leading zeros
+        count = 0
+        for i in range(len(xor)):
+            if xor[i] == '0':
+                count += 1
+            else:
+                break
+
+        return count
+
+        
+    distance_table = set()
+    peer_info = set()
+
+      
+
+    for my_id_value in my_id:
+        for ip, port, node_id in peers_nodes:
+            distance_table.add((my_id_value, xor_and_count_leading_zeros(str(my_id_value), str(node_id)), ip, port, node_id))
+
+    # Print the distance table as a formatted table
+    print("{:<40} {:<10} {:<15} {:<8} {}".format("my id", "distance", "ip", "port", "node_id"))
+    print("---------------------------------------------------------------------------------------------------------------------")
+    for my_id, distance, ip, port, node_id in distance_table:
+        print("{:<40} {:<10} {:<15} {:<8} {}".format(my_id, distance, ip, port, node_id))
+
+
 
 def main(argv):
     input_path = None
@@ -266,7 +371,9 @@ def main(argv):
     init_mode = False
     peers_mode = False
     download_mode = False 
+    rtable_mode = False
 
+    # arg parse
     for i in range(len(argv)):
         if argv[i] == '-csv' or argv[i] == '-pcap':
             input_type = argv[i]
@@ -277,6 +384,8 @@ def main(argv):
             peers_mode = True
         elif argv[i] == '-download':
             download_mode = True
+        elif argv[i] == '-rtable':
+            rtable_mode = True
         elif argv[i] != input_path:
             print("Error: Unrecognized argument " + argv[i] + ".")
             return
@@ -303,5 +412,12 @@ def main(argv):
         elif input_type == '-pcap':
             process_pcap(input_path, "download")
 
+    if rtable_mode:
+        if input_type == '-csv':
+            create_routing_table(input_path)
+        elif input_type == '-pcap':
+            process_pcap(input_path, "rtable")
+            
+        
 if __name__ == "__main__":
     main(sys.argv[1:])
