@@ -1,2 +1,2 @@
 #!/bin/bash
-python bt-monitor.py "$@"
+python3 bt-monitor.py  $(echo "$@" | tr -d '\r')
